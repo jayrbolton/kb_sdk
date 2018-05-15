@@ -28,26 +28,6 @@ _AJ = 'application/json'
 _URL_SCHEME = frozenset(['http', 'https'])
 
 
-def _get_token(user_id, password, auth_svc):
-    # This is bandaid helper function until we get a full
-    # KBase python auth client released
-    # note that currently globus usernames, and therefore kbase usernames,
-    # cannot contain non-ascii characters. In python 2, quote doesn't handle
-    # unicode, so if this changes this client will need to change.
-    body = ('user_id=' + _requests.utils.quote(user_id) + '&password=' +
-            _requests.utils.quote(password) + '&fields=token')
-    ret = _requests.post(auth_svc, data=body, allow_redirects=True)
-    status = ret.status_code
-    if status >= 200 and status <= 299:
-        tok = _json.loads(ret.text)
-    elif status == 403:
-        raise Exception('Authentication failed: Bad user_id/password ' +
-                        'combination for user %s' % (user_id))
-    else:
-        raise Exception(ret.text)
-    return tok['token']
-
-
 def _read_inifile(file=_os.environ.get(  # @ReservedAssignment
                   'KB_DEPLOYMENT_CONFIG', _os.environ['HOME'] +
                   '/.kbase_config')):
@@ -105,8 +85,6 @@ class BaseClient(object):
     Optional arguments (keywords in positional order):
     timeout - methods will fail if they take longer than this value in seconds.
         Default 1800.
-    user_id - a KBase user name.
-    password - the password corresponding to the user name.
     token - a KBase authentication token.
     ignore_authrc - if True, don't read auth configuration from
         ~/.kbase_config.
@@ -118,12 +96,10 @@ class BaseClient(object):
         asynchronous jobs run with the run_job method.
     '''
     def __init__(
-            self, url=None, timeout=30 * 60, user_id=None,
-            password=None, token=None, ignore_authrc=False,
+            self, url=None, timeout=30 * 60, token=None, ignore_authrc=False,
             trust_all_ssl_certificates=False,
             auth_svc='https://kbase.us/services/authorization/Sessions/Login',
-            lookup_url=False,
-            async_job_check_time_ms=100,
+            lookup_url=False, async_job_check_time_ms=100,
             async_job_check_time_scale_percent=150,
             async_job_check_max_time_ms=300000):
         if url is None:
@@ -140,23 +116,13 @@ class BaseClient(object):
         self.async_job_check_time_scale_percent = (
             async_job_check_time_scale_percent)
         self.async_job_check_max_time = async_job_check_max_time_ms / 1000.0
-        # token overrides user_id and password
-        if token is not None:
-            self._headers['AUTHORIZATION'] = token
-        elif user_id is not None and password is not None:
-            self._headers['AUTHORIZATION'] = _get_token(
-                user_id, password, auth_svc)
-        elif 'KB_AUTH_TOKEN' in _os.environ:
+        self._headers['AUTHORIZATION'] = token
+        if 'KB_AUTH_TOKEN' in _os.environ:
             self._headers['AUTHORIZATION'] = _os.environ.get('KB_AUTH_TOKEN')
         elif not ignore_authrc:
             authdata = _read_inifile()
-            if authdata is not None:
-                if authdata.get('token') is not None:
-                    self._headers['AUTHORIZATION'] = authdata['token']
-                elif(authdata.get('user_id') is not None and
-                        authdata.get('password') is not None):
-                    self._headers['AUTHORIZATION'] = _get_token(
-                        authdata['user_id'], authdata['password'], auth_svc)
+            if authdata is not None and authdata.get('token') is not None:
+                self._headers['AUTHORIZATION'] = authdata['token']
         if self.timeout < 1:
             raise ValueError('Timeout value must be at least 1 second')
 
